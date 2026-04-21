@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import mongoose from 'mongoose'
 import Invoice, { InvoiceStatus } from '../models/invoice.js'
 import Customer from '../models/customer.js'
+import Payment from '../models/payment.js'
 import Product from '../models/product.js'
 import { authMiddleware, requireRole } from '../middleware/auth.js'
 import type { IUser } from '../models/users.js'
@@ -229,6 +230,32 @@ invoices.post('/:id/cancel', requireRole('owner', 'admin'), async (c) => {
   })
 
   return c.json({ invoice })
+})
+
+invoices.delete('/:id', requireRole('owner', 'admin'), async (c) => {
+  const user = c.get('user')
+  const id = c.req.param('id')
+
+  const invoice = await Invoice.findOne({ _id: id, tenantId: user.tenantId })
+  if (!invoice) return c.json({ error: 'Invoice not found' }, 404)
+
+  const paymentCount = await Payment.countDocuments({ tenantId: user.tenantId, invoiceId: invoice._id })
+  if (paymentCount > 0) {
+    return c.json({ error: 'Cannot delete an invoice with recorded payments' }, 400)
+  }
+
+  await Invoice.deleteOne({ _id: invoice._id, tenantId: user.tenantId })
+
+  await logAudit({
+    tenantId: user.tenantId,
+    userId: user._id,
+    action: 'delete_invoice',
+    entityType: 'invoice',
+    entityId: invoice._id,
+    meta: { invoiceNumber: invoice.invoiceNumber },
+  })
+
+  return c.json({ success: true })
 })
 
 export default invoices

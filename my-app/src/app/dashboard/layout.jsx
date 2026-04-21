@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { getInvoices, getMe, logout } from "@/lib/api";
+import { getAuditLogs, getInvoices, getMe, logout } from "@/lib/api";
 
 /* ── SVG Icon Components ── */
 const IconDashboard = () => (
@@ -92,12 +92,33 @@ const IconGrid = () => (
   </svg>
 );
 
+const IconChevronDown = ({ open = false }) => (
+  <svg
+    width="14"
+    height="14"
+    viewBox="0 0 14 14"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={`transition-transform ${open ? "rotate-180" : ""}`}
+  >
+    <path d="M3 5.5L7 9L11 5.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
 export default function DashboardLayout({ children }) {
   const router = useRouter();
   const pathname = usePathname();
+  const operationsMenuRef = useRef(null);
+  const notificationsMenuRef = useRef(null);
+  const workspaceMenuRef = useRef(null);
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
+  const [operationsMenuOpen, setOperationsMenuOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
+  const [notificationItems, setNotificationItems] = useState([]);
+  const [notificationsLoading, setNotificationsLoading] = useState(true);
 
   useEffect(() => {
     async function checkAuth() {
@@ -111,6 +132,87 @@ export default function DashboardLayout({ children }) {
     }
     checkAuth();
   }, [router]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadNotifications() {
+      try {
+        const [invoiceData, auditData] = await Promise.allSettled([
+          getInvoices(),
+          getAuditLogs({ limit: 6 }),
+        ]);
+
+        if (!active) return;
+
+        const invoices = invoiceData.status === "fulfilled" ? invoiceData.value?.invoices || [] : [];
+        const logs = auditData.status === "fulfilled" ? auditData.value?.logs || [] : [];
+
+        const overdueItems = invoices
+          .filter((invoice) => {
+            if (!invoice?.dueDate) return false;
+            if (["paid", "cancelled"].includes(String(invoice.status || "").toLowerCase())) return false;
+            return new Date(invoice.dueDate) < new Date();
+          })
+          .slice(0, 3)
+          .map((invoice) => ({
+            id: `overdue-${invoice._id || invoice.invoiceNumber}`,
+            kind: "Task",
+            title: invoice.invoiceNumber || "Overdue invoice",
+            detail: `${invoice.clientId?.name || invoice.customerId?.name || "Unknown client"} needs follow-up on overdue balance.`,
+            meta: "Action Required",
+            href: "/dashboard/directives",
+          }));
+
+        const activityItems = logs.slice(0, 4).map((log) => ({
+          id: log._id,
+          kind: "Activity",
+          title: log.action || "Workspace activity",
+          detail: `${log.entityType || "system"} updated by ${log.userId?.name || log.userId?.email || "system"}.`,
+          meta: log.createdAt ? new Date(log.createdAt).toLocaleString() : "Recent",
+          href: "/dashboard/audit-log",
+        }));
+
+        setNotificationItems([...overdueItems, ...activityItems].slice(0, 6));
+      } finally {
+        if (active) setNotificationsLoading(false);
+      }
+    }
+
+    loadNotifications();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (operationsMenuRef.current && !operationsMenuRef.current.contains(event.target)) {
+        setOperationsMenuOpen(false);
+      }
+      if (notificationsMenuRef.current && !notificationsMenuRef.current.contains(event.target)) {
+        setNotificationsOpen(false);
+      }
+      if (workspaceMenuRef.current && !workspaceMenuRef.current.contains(event.target)) {
+        setWorkspaceMenuOpen(false);
+      }
+    }
+
+    function handleEscape(event) {
+      if (event.key === "Escape") {
+        setOperationsMenuOpen(false);
+        setNotificationsOpen(false);
+        setWorkspaceMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, []);
 
   const handleLogout = async () => {
     await logout();
@@ -159,6 +261,26 @@ export default function DashboardLayout({ children }) {
     { name: "Clients", path: "/dashboard/clients", icon: IconClients },
     { name: "Reports", path: "/dashboard/reports", icon: IconReports },
   ];
+  const operationsLinks = [
+    { name: "Directives", path: "/dashboard/directives" },
+    { name: "Audit Log", path: "/dashboard/audit-log" },
+  ];
+  const workspaceLinks = [
+    { name: "Settings", path: "/dashboard/settings", helper: "Workspace profile and security" },
+    { name: "Integrations", path: "/dashboard/apps", helper: "Connected modules and tools" },
+    { name: "Account", path: "/dashboard/settings", helper: "User access and password controls" },
+  ];
+  const operationsActive = operationsLinks.some((link) => pathname === link.path);
+  const unreadNotificationCount = notificationItems.filter((item) => item.kind === "Task").length;
+  const notificationLabel = notificationsLoading
+    ? "Loading"
+    : unreadNotificationCount > 0
+      ? `${unreadNotificationCount} tasks`
+      : `${notificationItems.length} recent`;
+
+  const currentWorkspaceSection = useMemo(() => {
+    return workspaceLinks.find((link) => pathname === link.path)?.name || "Workspace";
+  }, [pathname]);
 
   if (loading) {
     return (
@@ -262,30 +384,188 @@ export default function DashboardLayout({ children }) {
                 className="bg-transparent font-inter text-sm text-on-surface placeholder:text-outline-variant w-full"
               />
             </div>
-            <nav className="flex items-center gap-5">
-              <Link href="/dashboard/directives" className="font-inter text-[0.8125rem] text-secondary hover:text-on-surface transition-colors">
-                Directives
-              </Link>
-              <Link href="/dashboard/audit-log" className="font-inter text-[0.8125rem] text-secondary hover:text-on-surface transition-colors">
-                Audit Log
-              </Link>
-            </nav>
+            <div className="relative" ref={operationsMenuRef}>
+              <button
+                type="button"
+                onClick={() => setOperationsMenuOpen((open) => !open)}
+                className={`flex items-center gap-2 rounded-md px-3 py-2 font-inter text-[0.8125rem] transition-colors ${
+                  operationsActive || operationsMenuOpen
+                    ? "bg-surface-container-high text-on-surface"
+                    : "text-secondary hover:bg-surface-container-highest hover:text-on-surface"
+                }`}
+              >
+                Operations
+                <IconChevronDown open={operationsMenuOpen} />
+              </button>
+
+              {operationsMenuOpen && (
+                <div className="absolute left-0 top-[calc(100%+0.5rem)] z-20 w-52 rounded-xl border border-[rgba(169,180,185,0.16)] bg-surface-container-lowest p-2 shadow-[0px_12px_30px_rgba(42,52,57,0.12)]">
+                  {operationsLinks.map((link) => {
+                    const isActive = pathname === link.path;
+                    return (
+                      <Link
+                        key={link.path}
+                        href={link.path}
+                        onClick={() => setOperationsMenuOpen(false)}
+                        className={`flex items-center justify-between rounded-lg px-3 py-2.5 font-inter text-[0.8125rem] transition-colors ${
+                          isActive
+                            ? "bg-surface-container-high text-on-surface font-semibold"
+                            : "text-secondary hover:bg-surface-container-highest hover:text-on-surface"
+                        }`}
+                      >
+                        <span>{link.name}</span>
+                        {isActive && <span className="text-[0.625rem] uppercase tracking-[0.14em] text-primary-dim">Open</span>}
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Right: Actions */}
           <div className="flex items-center gap-4">
-            <button
-              onClick={() => router.push("/dashboard/notifications")}
-              className="text-secondary hover:text-on-surface transition-colors p-1"
-            >
-              <IconBell />
-            </button>
-            <button
-              onClick={() => router.push("/dashboard/apps")}
-              className="text-secondary hover:text-on-surface transition-colors p-1"
-            >
-              <IconGrid />
-            </button>
+            <div className="relative" ref={notificationsMenuRef}>
+              <button
+                type="button"
+                onClick={() => {
+                  setNotificationsOpen((open) => !open);
+                  setWorkspaceMenuOpen(false);
+                }}
+                className={`relative p-1 transition-colors ${
+                  notificationsOpen ? "text-on-surface" : "text-secondary hover:text-on-surface"
+                }`}
+              >
+                <IconBell />
+                {unreadNotificationCount > 0 && (
+                  <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-error px-1 font-inter text-[0.5625rem] font-bold text-white">
+                    {Math.min(unreadNotificationCount, 9)}
+                  </span>
+                )}
+              </button>
+
+              {notificationsOpen && (
+                <div className="absolute right-0 top-[calc(100%+0.6rem)] z-20 w-96 rounded-2xl border border-[rgba(169,180,185,0.16)] bg-surface-container-lowest p-3 shadow-[0px_18px_40px_rgba(42,52,57,0.14)]">
+                  <div className="flex items-start justify-between gap-4 px-2 py-2">
+                    <div>
+                      <div className="font-manrope text-lg font-bold text-on-surface">Recent Activity</div>
+                      <div className="mt-1 font-inter text-xs text-secondary">
+                        Quick access to action-required tasks and latest workspace activity.
+                      </div>
+                    </div>
+                    <div className="rounded-full bg-surface-container-high px-3 py-1 font-inter text-[0.625rem] font-semibold uppercase tracking-[0.18em] text-secondary">
+                      {notificationLabel}
+                    </div>
+                  </div>
+
+                  <div className="mt-2 flex max-h-96 flex-col gap-2 overflow-y-auto">
+                    {notificationsLoading && (
+                      <div className="rounded-xl bg-surface-container-highest px-4 py-4 font-inter text-sm text-secondary">
+                        Loading recent activity...
+                      </div>
+                    )}
+
+                    {!notificationsLoading && notificationItems.length === 0 && (
+                      <div className="rounded-xl bg-surface-container-highest px-4 py-4 font-inter text-sm text-secondary">
+                        No recent activities or tasks.
+                      </div>
+                    )}
+
+                    {!notificationsLoading && notificationItems.map((item) => (
+                      <Link
+                        key={item.id}
+                        href={item.href}
+                        onClick={() => setNotificationsOpen(false)}
+                        className="rounded-xl bg-surface-container-highest px-4 py-4 transition-colors hover:bg-surface-container-high"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className={`rounded-full px-2.5 py-1 font-inter text-[0.625rem] font-semibold uppercase tracking-[0.16em] ${
+                            item.kind === "Task" ? "bg-[#fff1f1] text-error" : "bg-[#eef4ff] text-primary-dim"
+                          }`}>
+                            {item.kind}
+                          </div>
+                          <div className="font-inter text-[0.6875rem] text-secondary">{item.meta}</div>
+                        </div>
+                        <div className="mt-3 font-manrope text-base font-bold text-on-surface">{item.title}</div>
+                        <div className="mt-1 font-inter text-sm text-secondary">{item.detail}</div>
+                      </Link>
+                    ))}
+                  </div>
+
+                  <div className="mt-3 border-t border-[rgba(169,180,185,0.14)] px-2 pt-3">
+                    <Link
+                      href="/dashboard/notifications"
+                      onClick={() => setNotificationsOpen(false)}
+                      className="font-inter text-sm font-semibold text-primary-dim hover:underline"
+                    >
+                      Open full notifications view
+                    </Link>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="relative" ref={workspaceMenuRef}>
+              <button
+                type="button"
+                onClick={() => {
+                  setWorkspaceMenuOpen((open) => !open);
+                  setNotificationsOpen(false);
+                }}
+                className={`p-1 transition-colors ${
+                  workspaceMenuOpen ? "text-on-surface" : "text-secondary hover:text-on-surface"
+                }`}
+              >
+                <IconGrid />
+              </button>
+
+              {workspaceMenuOpen && (
+                <div className="absolute right-0 top-[calc(100%+0.6rem)] z-20 w-80 rounded-2xl border border-[rgba(169,180,185,0.16)] bg-surface-container-lowest p-3 shadow-[0px_18px_40px_rgba(42,52,57,0.14)]">
+                  <div className="px-2 py-2">
+                    <div className="font-manrope text-lg font-bold text-on-surface">Workspace Menu</div>
+                    <div className="mt-1 font-inter text-xs text-secondary">
+                      Essential controls for workspace setup, integrations, and account management.
+                    </div>
+                  </div>
+
+                  <div className="mt-2 flex flex-col gap-2">
+                    {workspaceLinks.map((link) => {
+                      const isActive = pathname === link.path && (link.name !== "Account" || currentWorkspaceSection === "Account");
+                      return (
+                        <Link
+                          key={link.name}
+                          href={link.path}
+                          onClick={() => setWorkspaceMenuOpen(false)}
+                          className={`rounded-xl px-4 py-4 transition-colors ${
+                            isActive
+                              ? "bg-surface-container-high text-on-surface"
+                              : "bg-surface-container-highest hover:bg-surface-container-high"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="font-manrope text-base font-bold text-on-surface">{link.name}</div>
+                            {isActive && (
+                              <span className="font-inter text-[0.625rem] font-semibold uppercase tracking-[0.16em] text-primary-dim">
+                                Open
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-1 font-inter text-sm text-secondary">{link.helper}</div>
+                        </Link>
+                      );
+                    })}
+                  </div>
+
+                  <div className="mt-3 rounded-xl bg-surface-container-highest px-4 py-3">
+                    <div className="font-inter text-[0.625rem] font-semibold uppercase tracking-[0.18em] text-secondary">
+                      Signed in as
+                    </div>
+                    <div className="mt-2 font-inter text-sm font-semibold text-on-surface">{user?.name}</div>
+                    <div className="font-inter text-xs text-secondary">{user?.email || user?.role || "Workspace user"}</div>
+                  </div>
+                </div>
+              )}
+            </div>
             <button
               onClick={handleQuickExport}
               disabled={exporting}

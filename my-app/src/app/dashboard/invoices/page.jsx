@@ -1,15 +1,21 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { getInvoices } from "@/lib/api";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { cancelInvoice, deleteInvoice, getInvoices, sendInvoice } from "@/lib/api";
+import { useRouter } from "next/navigation";
 
 export default function InvoicesPage() {
+  const router = useRouter();
+  const actionMenuRef = useRef(null);
   const [filter, setFilter] = useState("All Invoices");
   const [selected, setSelected] = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [actionMenuId, setActionMenuId] = useState(null);
+  const [actionLoadingId, setActionLoadingId] = useState(null);
+  const [actionMessage, setActionMessage] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -26,6 +32,27 @@ export default function InvoicesPage() {
     load();
     return () => {
       active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (actionMenuRef.current && !actionMenuRef.current.contains(event.target)) {
+        setActionMenuId(null);
+      }
+    }
+
+    function handleEscape(event) {
+      if (event.key === "Escape") {
+        setActionMenuId(null);
+      }
+    }
+
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleEscape);
     };
   }, []);
 
@@ -67,6 +94,75 @@ export default function InvoicesPage() {
       cancelled: "bg-error-container text-on-surface",
     };
     return styles[status] || styles.draft;
+  };
+
+  const updateInvoiceRow = (id, nextStatus) => {
+    setInvoices((prev) =>
+      prev.map((invoice) =>
+        invoice._id === id
+          ? {
+              ...invoice,
+              status: nextStatus,
+            }
+          : invoice
+      )
+    );
+  };
+
+  const removeInvoiceRows = (ids) => {
+    const idSet = new Set(ids);
+    setInvoices((prev) => prev.filter((invoice) => !idSet.has(invoice._id)));
+    setSelected((prev) => prev.filter((id) => !idSet.has(id)));
+  };
+
+  const handleInvoiceAction = async (invoice, action) => {
+    setError("");
+    setActionMessage("");
+    setActionLoadingId(invoice.id);
+
+    try {
+      if (action === "send") {
+        await sendInvoice(invoice.id);
+        updateInvoiceRow(invoice.id, "sent");
+        setActionMessage(`Invoice ${invoice.invoiceNumber} marked as sent.`);
+      }
+
+      if (action === "cancel") {
+        await cancelInvoice(invoice.id);
+        updateInvoiceRow(invoice.id, "cancelled");
+        setActionMessage(`Invoice ${invoice.invoiceNumber} cancelled.`);
+      }
+
+      if (action === "payment") {
+        router.push("/dashboard/payments");
+      }
+
+      if (action === "delete") {
+        await deleteInvoice(invoice.id);
+        removeInvoiceRows([invoice.id]);
+        setActionMessage(`Invoice ${invoice.invoiceNumber} deleted.`);
+      }
+    } catch (err) {
+      setError(err.message || "Failed to run invoice action.");
+    } finally {
+      setActionLoadingId(null);
+      setActionMenuId(null);
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    setError("");
+    setActionMessage("");
+
+    if (selected.length === 0) return;
+
+    try {
+      await Promise.all(selected.map((id) => deleteInvoice(id)));
+      removeInvoiceRows(selected);
+      setActionMessage(`${selected.length} invoice${selected.length > 1 ? "s" : ""} deleted.`);
+    } catch (err) {
+      setError(err.message || "Failed to delete selected invoices.");
+    }
   };
 
   return (
@@ -116,6 +212,9 @@ export default function InvoicesPage() {
           </div>
         </div>
       </div>
+      {actionMessage && (
+        <div className="bg-tertiary-container text-on-surface p-3 rounded-sm text-sm font-inter">{actionMessage}</div>
+      )}
 
       {/* ── Filter Row ── */}
       <div className="flex items-center justify-between">
@@ -212,9 +311,56 @@ export default function InvoicesPage() {
                   </span>
                 </td>
                 <td className="py-4 px-5">
-                  <button className="text-secondary hover:text-on-surface transition-colors opacity-0 group-hover:opacity-100">
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="3" r="1.2" fill="currentColor"/><circle cx="8" cy="8" r="1.2" fill="currentColor"/><circle cx="8" cy="13" r="1.2" fill="currentColor"/></svg>
-                  </button>
+                  <div className="relative" ref={actionMenuId === inv.id ? actionMenuRef : null}>
+                    <button
+                      type="button"
+                      onClick={() => setActionMenuId((current) => (current === inv.id ? null : inv.id))}
+                      disabled={actionLoadingId === inv.id}
+                      className="rounded-md p-1 text-secondary transition-colors hover:bg-surface-container-high hover:text-on-surface disabled:opacity-60"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="3" r="1.2" fill="currentColor"/><circle cx="8" cy="8" r="1.2" fill="currentColor"/><circle cx="8" cy="13" r="1.2" fill="currentColor"/></svg>
+                    </button>
+
+                    {actionMenuId === inv.id && (
+                      <div className="absolute right-0 top-[calc(100%+0.4rem)] z-10 w-44 rounded-xl border border-[rgba(169,180,185,0.16)] bg-surface-container-lowest p-2 shadow-[0px_12px_30px_rgba(42,52,57,0.12)]">
+                        {inv.status !== "sent" && inv.status !== "paid" && inv.status !== "cancelled" && (
+                          <button
+                            type="button"
+                            onClick={() => handleInvoiceAction(inv, "send")}
+                            className="flex w-full items-center rounded-lg px-3 py-2.5 text-left font-inter text-[0.8125rem] text-secondary transition-colors hover:bg-surface-container-highest hover:text-on-surface"
+                          >
+                            Mark as Sent
+                          </button>
+                        )}
+
+                        {inv.status !== "cancelled" && inv.status !== "paid" && (
+                          <button
+                            type="button"
+                            onClick={() => handleInvoiceAction(inv, "cancel")}
+                            className="flex w-full items-center rounded-lg px-3 py-2.5 text-left font-inter text-[0.8125rem] text-error transition-colors hover:bg-[#fff4f3]"
+                          >
+                            Cancel Invoice
+                          </button>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={() => handleInvoiceAction(inv, "payment")}
+                          className="flex w-full items-center rounded-lg px-3 py-2.5 text-left font-inter text-[0.8125rem] text-secondary transition-colors hover:bg-surface-container-highest hover:text-on-surface"
+                        >
+                          Record Payment
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleInvoiceAction(inv, "delete")}
+                          className="flex w-full items-center rounded-lg px-3 py-2.5 text-left font-inter text-[0.8125rem] text-error transition-colors hover:bg-[#fff4f3]"
+                        >
+                          Delete Invoice
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}
@@ -241,7 +387,11 @@ export default function InvoicesPage() {
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M1 8l6 4 6-4M1 4l6 4 6-4-6-4-6 4z" stroke="currentColor" strokeWidth="1.2"/></svg>
               Send Reminders
             </button>
-            <button className="flex items-center gap-1.5 font-inter text-[0.8125rem] text-error hover:text-error/80 transition-colors">
+            <button
+              type="button"
+              onClick={handleBulkDelete}
+              className="flex items-center gap-1.5 font-inter text-[0.8125rem] text-error hover:text-error/80 transition-colors"
+            >
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 4h10M5 4V2h4v2M3 4v8h8V4" stroke="currentColor" strokeWidth="1.2"/></svg>
               Delete
             </button>

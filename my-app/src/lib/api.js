@@ -92,6 +92,24 @@ export function createInvoice(payload) {
   })
 }
 
+export function sendInvoice(id) {
+  return request(`/invoices/${id}/send`, {
+    method: 'POST',
+  })
+}
+
+export function cancelInvoice(id) {
+  return request(`/invoices/${id}/cancel`, {
+    method: 'POST',
+  })
+}
+
+export function deleteInvoice(id) {
+  return request(`/invoices/${id}`, {
+    method: 'DELETE',
+  })
+}
+
 export function getPayments(invoiceId) {
   const query = invoiceId ? `?invoiceId=${encodeURIComponent(invoiceId)}` : ''
   return request(`/payments${query}`)

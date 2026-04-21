@@ -231,8 +231,11 @@ export default function CreateInvoicePage() {
                       <button
                         type="button"
                         onClick={() => removeRow(i)}
-                        className="font-inter text-[0.75rem] text-error hover:text-error/80 transition-colors"
+                        className="inline-flex items-center gap-1.5 font-inter text-[0.8125rem] text-error hover:text-error/80 transition-colors"
                       >
+                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                          <path d="M2 4h10M5 4V2h4v2M3 4v8h8V4" stroke="currentColor" strokeWidth="1.2"/>
+                        </svg>
                         Delete
                       </button>
                     </td>
