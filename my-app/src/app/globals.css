@@ -1,0 +1,51 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-primary: #041139;
+  --color-primary-dim: #2848b7;
+  --color-primary-light: #4a6cf7;
+  --color-on-primary: #ffffff;
+  
+  --color-secondary: #475569;
+  --color-on-secondary-fixed: #475569;
+  
+  --color-surface: #f7f9fb;
+  --color-surface-container: #f4f6f8;
+  --color-surface-container-low: #f0f4f7;
+  --color-surface-container-high: #e8ecf0;
+  --color-surface-container-lowest: #ffffff;
+  --color-surface-container-highest: #f8fafc;
+  
+  --color-on-surface: #2a3439;
+  --color-on-surface-dim: #64748b;
+  --color-outline-variant: #a9b4b9;
+  
+  --color-tertiary-container: #e3dbfd;
+  --color-error: #dc2626;
+  --color-error-container: #fe8983;
+  --color-success: #16a34a;
+  --color-success-container: #dcfce7;
+
+  --font-manrope: var(--font-manrope);
+  --font-inter: var(--font-inter);
+}
+
+/* ── Base resets ── */
+body {
+  background-color: var(--color-surface);
+  color: var(--color-on-surface);
+  font-family: var(--font-inter);
+}
+
+* { box-sizing: border-box; }
+
+table { border-collapse: collapse; }
+td, th { border: none !important; }
+input, textarea, select, button { outline: none; font-family: inherit; }
+a { text-decoration: none; color: inherit; }
+
+/* ── Scrollbar styling ── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-outline-variant); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-secondary); }
