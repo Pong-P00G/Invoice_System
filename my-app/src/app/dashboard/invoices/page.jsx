@@ -56,25 +56,73 @@ export default function InvoicesPage() {
     };
   }, []);
 
+  const formatCurrency = (amount, currency = "USD") =>
+    new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(Number(amount || 0));
+
+  const today = useMemo(() => new Date(), []);
+
   const rows = useMemo(
     () =>
       invoices.map((inv) => ({
         id: inv._id,
         invoiceNumber: inv.invoiceNumber,
         client: inv.clientId?.name || inv.customerId?.name || "Unknown Customer",
-        date: new Date(inv.invoiceDate).toLocaleDateString(),
+        date: inv.invoiceDate ? new Date(inv.invoiceDate).toLocaleDateString() : "N/A",
+        dueDate: inv.dueDate ? new Date(inv.dueDate) : null,
         total: Number(inv.total || 0),
-        status: String(inv.status || "draft"),
+        balanceDue: Number(inv.balanceDue || 0),
+        currency: inv.currency || "USD",
+        status: String(inv.status || "draft").toLowerCase(),
       })),
     [invoices]
   );
 
+  const invoicesWithDerivedStatus = useMemo(
+    () =>
+      rows.map((inv) => {
+        const isOverdue =
+          !!inv.dueDate &&
+          inv.balanceDue > 0 &&
+          !["paid", "cancelled"].includes(inv.status) &&
+          inv.dueDate < today;
+
+        return {
+          ...inv,
+          derivedStatus: isOverdue ? "overdue" : inv.status,
+        };
+      }),
+    [rows, today]
+  );
+
+  const metrics = useMemo(() => {
+    const openInvoices = invoicesWithDerivedStatus.filter((invoice) => invoice.status !== "cancelled");
+    const totalReceivables = openInvoices.reduce((sum, invoice) => sum + invoice.balanceDue, 0);
+    const overdueInvoices = invoicesWithDerivedStatus.filter((invoice) => invoice.derivedStatus === "overdue");
+    const overdueBalance = overdueInvoices.reduce((sum, invoice) => sum + invoice.balanceDue, 0);
+    const pendingApprovals = invoicesWithDerivedStatus.filter((invoice) => invoice.status === "draft").length;
+
+    return {
+      totalReceivables,
+      overdueBalance,
+      pendingApprovals,
+      overdueCount: overdueInvoices.length,
+      totalInvoices: invoicesWithDerivedStatus.length,
+    };
+  }, [invoicesWithDerivedStatus]);
+
   const filteredInvoices =
     filter === "All Invoices"
-      ? rows
-      : rows.filter((inv) => {
+      ? invoicesWithDerivedStatus
+      : invoicesWithDerivedStatus.filter((inv) => {
           if (filter === "Drafts") return inv.status === "draft";
-          return inv.status === filter.toLowerCase();
+          if (filter === "Overdue") return inv.derivedStatus === "overdue";
+          if (filter === "Pending") return inv.balanceDue > 0 && !["paid", "cancelled", "draft"].includes(inv.status);
+          return inv.derivedStatus === filter.toLowerCase();
         });
 
   const toggleSelect = (id) => {
@@ -182,17 +230,17 @@ export default function InvoicesPage() {
 
           <div className="grid grid-cols-3 gap-8">
             <div>
-              <div className="font-manrope text-[2rem] font-extrabold text-on-surface tracking-tight leading-none">$428,190.00</div>
+              <div className="font-manrope text-[2rem] font-extrabold text-on-surface tracking-tight leading-none">{formatCurrency(metrics.totalReceivables)}</div>
               <div className="font-inter text-[0.75rem] text-secondary mt-1">Total Receivables</div>
               <div className="h-1 w-16 bg-primary-dim rounded-full mt-2"></div>
             </div>
             <div>
-              <div className="font-manrope text-[2rem] font-extrabold text-on-surface tracking-tight leading-none">$12,400.00</div>
+              <div className="font-manrope text-[2rem] font-extrabold text-on-surface tracking-tight leading-none">{formatCurrency(metrics.overdueBalance)}</div>
               <div className="font-inter text-[0.75rem] text-secondary mt-1">Overdue Balance</div>
               <div className="h-1 w-16 bg-error rounded-full mt-2"></div>
             </div>
             <div>
-              <div className="font-manrope text-[2rem] font-extrabold text-on-surface tracking-tight leading-none">42</div>
+              <div className="font-manrope text-[2rem] font-extrabold text-on-surface tracking-tight leading-none">{metrics.pendingApprovals}</div>
               <div className="font-inter text-[0.75rem] text-secondary mt-1">Pending Approvals</div>
               <div className="h-1 w-16 bg-primary-dim/40 rounded-full mt-2"></div>
             </div>
@@ -207,7 +255,9 @@ export default function InvoicesPage() {
               Pro Insight
             </span>
             <p className="font-manrope text-xl font-bold leading-snug">
-              Your invoicing cycle is 12% faster than last month.
+              {metrics.overdueCount > 0
+                ? `${metrics.overdueCount} invoice${metrics.overdueCount === 1 ? "" : "s"} need overdue follow-up.`
+                : "No overdue invoices require follow-up right now."}
             </p>
           </div>
         </div>
@@ -302,12 +352,12 @@ export default function InvoicesPage() {
                 <td className="py-4 px-5 font-inter text-[0.875rem] text-secondary">{inv.date}</td>
                 <td className="py-4 px-5">
                   <span className="font-manrope text-[0.9375rem] font-semibold text-on-surface">
-                    ${inv.total.toFixed(2)}
+                    {formatCurrency(inv.total, inv.currency)}
                   </span>
                 </td>
                 <td className="py-4 px-5">
-                  <span className={`px-3 py-1 text-[0.625rem] font-inter font-semibold rounded-full uppercase tracking-wider ${statusBadge(inv.status)}`}>
-                    {inv.status}
+                  <span className={`px-3 py-1 text-[0.625rem] font-inter font-semibold rounded-full uppercase tracking-wider ${statusBadge(inv.derivedStatus)}`}>
+                    {inv.derivedStatus}
                   </span>
                 </td>
                 <td className="py-4 px-5">
@@ -400,14 +450,11 @@ export default function InvoicesPage() {
 
         {/* Pagination */}
         <div className="px-5 py-4 flex items-center justify-between">
-          <span className="font-inter text-[0.8125rem] text-secondary">Showing 1 to 5 of 84 invoices</span>
-          <div className="flex items-center gap-1.5">
-            <button className="w-8 h-8 rounded-md flex items-center justify-center text-secondary hover:bg-surface-container-low transition-colors font-inter text-sm">&lt;</button>
-            <button className="w-8 h-8 rounded-md flex items-center justify-center bg-primary text-on-primary font-inter text-sm font-semibold">1</button>
-            <button className="w-8 h-8 rounded-md flex items-center justify-center text-secondary hover:bg-surface-container-low transition-colors font-inter text-sm">2</button>
-            <button className="w-8 h-8 rounded-md flex items-center justify-center text-secondary hover:bg-surface-container-low transition-colors font-inter text-sm">3</button>
-            <button className="w-8 h-8 rounded-md flex items-center justify-center text-secondary hover:bg-surface-container-low transition-colors font-inter text-sm">&gt;</button>
-          </div>
+          <span className="font-inter text-[0.8125rem] text-secondary">
+            {loading
+              ? "Loading invoice totals..."
+              : `Showing ${filteredInvoices.length} of ${metrics.totalInvoices} invoices`}
+          </span>
         </div>
       </div>
     </div>
