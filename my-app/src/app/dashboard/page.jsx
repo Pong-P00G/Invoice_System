@@ -78,7 +78,7 @@ export default function DashboardPage() {
       {/* ── Header ── */}
       <div className="flex items-end justify-between">
         <div>
-          <h1 className="font-manrope text-[2rem] font-extrabold tracking-tight text-on-surface leading-tight">
+          <h1 className="font-manrope text-white text-[2rem] font-extrabold tracking-tight text-on-surface leading-tight">
             Executive Overview
           </h1>
           <p className="font-inter text-sm text-secondary mt-1">
